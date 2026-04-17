@@ -3,7 +3,7 @@ import { useState } from "react"
 import { db } from "@/lib/offline-db"
 
 export default function Home(){
-  const [input,setInput] = useState<string>(' ')
+  const [input,setInput] = useState<string>('')
   const [data,setData] = useState<any>(null)
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
@@ -24,11 +24,19 @@ export default function Home(){
         setLoading(false)
         return;
       }
-      console.log("Cache miss, couldn't find the word in localDB, searching in API...")
+      console.log("Cache miss, searching in API...")
       const result = await fetch(`/api/search?word=${query}`)
-      const response = await result.json()
+      
+      const text = await result.text();
+      let response;
+      try {
+        response = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Invalid JSON response from server: ${text.slice(0, 50)}...`);
+      }
+
       if(!result.ok){
-        throw new Error("Word not found")
+        throw new Error(response.error || "Word not found");
       }
       const definitionData = response.data[0];
       await db.words.put({
@@ -38,8 +46,9 @@ export default function Home(){
       })
       console.log("Word saved to localDB for future use")
       setData(definitionData)
-    }catch(error){
-    console.error("Error")
+    }catch(err: any){
+    console.error("Search Error:", err)
+    setError(err.message || "An unexpected error occurred")
   }finally{
     setLoading(false)
   }
