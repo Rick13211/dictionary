@@ -61,11 +61,10 @@ When a dictionary search is submitted to the backend, the database engine consul
 - Storage: 100 MB of available space for offline caching
 
 **Software Requirements:**
-- **Frontend Framework**: React.js / Next.js
-- **Service Worker / PWA**: Workbox or standard Service Worker API
-- **Client Storage**: IndexedDB (handled via wrappers like `idb` or Dexie.js)
-- **Backend Environment**: Node.js / Python / Go
-- **Database**: PostgreSQL / Elasticsearch (for fast indexed searching server-side)
+- **Full Stack Framework**: Next.js
+- **Service Worker / PWA**: Serwis for SW and next-pwa for PWA
+- **Client Storage**: IndexedDB (handled via wrappers like `idb` or Dexie.js) used Dexie.js
+- **Database**: PostgreSQL
 - **Web Browser**: Chrome, Firefox, or Safari (supporting modern PWA standards)
 
 ---
@@ -75,9 +74,16 @@ When a dictionary search is submitted to the backend, the database engine consul
 ```mermaid
 flowchart TD
     A[User Inputs Word] --> B{Is Network Online?}
+    
     B -- Yes --> C[Client calls Server API]
-    C --> D[Server Queries Indexed Database]
-    D --> E[Server Retrieves Fast Results]
+    C --> D[Server Queries Indexed DB]
+    D --> K{Word found in DB?}
+    
+    K -- Yes --> E[Server Retrieves Results]
+    K -- No --> L[Server Calls External API]
+    L --> M[Server Saves New Word to DB]
+    M --> E
+    
     E --> F[Client Caches Response in IndexedDB]
     F --> G[Display Meaning to User]
     
@@ -94,56 +100,122 @@ flowchart TD
 ### 4.1 Code for Online Server API
 *The server endpoint is responsible for taking the request, looking up the database, and returning the structured definition.*
 ```javascript
-// Express.js Example Route
-app.get('/api/search', async (req, res) => {
-    const { word } = req.query;
-    try {
-        // Fast retrieval using the indexed 'word' column in DB
-        const result = await db.query('SELECT * FROM dictionary WHERE word = $1', [word]);
-        if (result.rows.length > 0) {
-            res.status(200).json(result.rows[0]);
-        } else {
-            res.status(404).json({ error: "Word not found" });
-        }
-    } catch (err) {
-        res.status(500).json({ error: "Server Error" });
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const word = searchParams.get('word');
+
+  if (!word) {
+    return NextResponse.json({ error: "Word parameter is required" }, { status: 400 });
+  }
+
+  const lowercaseWord = word.toLowerCase();
+
+  try {
+    const dbResult = await pool.query('SELECT data FROM words WHERE word = $1', [lowercaseWord]);
+    
+    if (dbResult.rows.length > 0) {
+      console.log(`Cache Hit for: ${lowercaseWord}`);
+      return NextResponse.json({ data: dbResult.rows[0].data }); 
     }
-});
+
+    console.log(`Cache Miss for: ${lowercaseWord}. Fetching from external API...`);
+    const result = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${lowercaseWord}`);
+    
+    if (!result.ok) {
+      return NextResponse.json({ error: "Word not found or API error" }, { status: result.status });
+    }
+
+    const data = await result.json();
+
+    await pool.query(
+      'INSERT INTO words (word, data) VALUES ($1, $2) ON CONFLICT (word) DO NOTHING',
+      [lowercaseWord, JSON.stringify(data)]
+    );
+
+    return NextResponse.json({ data });
+  } catch (error) {
+    console.error('Database/API error:', error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
 ```
 
 ### 4.2 Code for Offline Client (PWA & IndexedDB)
 *Client logic intercepts the search request and checks online/offline state, interacting with IndexedDB.*
 ```javascript
-async function searchDictionary(word) {
-    if (!navigator.onLine) {
-        const cacheDB = await openDB('dictionary-cache', 1);
-        const localResult = await cacheDB.get('words', word);
-        
-        if(localResult) return localResult;
-        throw new Error("Word not cached for offline use");
-    } else {
-        const response = await fetch(`/api/search?word=${word}`);
-        const data = await response.json();
-        
-        const cacheDB = await openDB('dictionary-cache', 1);
-        await cacheDB.put('words', data);
-        
-        return data;
-    }
-}
+const handleSubmit  = async(e:React.FormEvent)=>{
+    e.preventDefault();
+    if(!input.trim())return;
+    const query = input.trim().toLowerCase();
+    setLoading(true)
+    setError(null)
+    setData(null)
+
+    try{
+      const localWord = await db.words.get(query);
+      if(localWord){
+        console.log("loaded instantly from localDB")
+        setData(localWord.data)
+        setLoading(false)
+        return;
+      }
+      console.log("Cache miss, searching in API...")
+      const result = await fetch(`/api/search?word=${query}`)
+      
+      const text = await result.text();
+      let response;
+      try {
+        response = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Invalid JSON response from server: ${text.slice(0, 50)}...`);
+      }
+
+      if(!result.ok){
+        throw new Error(response.error || "Word not found");
+      }
+      const definitionData = response.data[0];
+      await db.words.put({
+        word:query,
+        data:definitionData,
+        timestamp:Date.now()
+      })
+      console.log("Word saved to localDB for future use")
+      setData(definitionData)
+    }catch(err: any){
+    console.error("Search Error:", err)
+    setError(err.message || "An unexpected error occurred")
+  }finally{
+    setLoading(false)
+  }
+  }
 ```
 
 ### 4.3 Indexing and Query Optimization Code
 *Applying an index at the database setup phase ensures that the `word` column has an efficient lookup table.*
 ```sql
-CREATE TABLE dictionary (
-    id SERIAL PRIMARY KEY,
-    word VARCHAR(100) UNIQUE NOT NULL,
-    meaning TEXT NOT NULL,
-    synonyms TEXT[]
-);
 
-CREATE INDEX idx_dictionary_word ON dictionary(word);
+async function setup() {
+  const query = `
+    CREATE TABLE IF NOT EXISTS words (
+      id SERIAL PRIMARY KEY,
+      word VARCHAR(255) UNIQUE NOT NULL,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  try {
+    console.log('Running setup query...');
+    await pool.query(query);
+    console.log('Setup complete! The "words" table is ready.');
+  } catch (error) {
+    console.error('Error setting up database:', error);
+  } finally {
+    await pool.end();
+  }
+}
+
+setup();
 ```
 
 ---
@@ -152,15 +224,19 @@ CREATE INDEX idx_dictionary_word ON dictionary(word);
 
 ### 5.1. User Submitting a Search Query
 *(Imagine a screenshot demonstrating the UI input field where a user types 'Robust' and hits Search)*
+![UI input field where a user types 'Robust' and hits Search](/public/screenshots/user_input.png)
 
 ### 5.2. Server Processing Indexed Search (Online Mode)
 *(Imagine a screenshot of the terminal log showing exactly how many milliseconds the indexed query took compared to an un-indexed query)*
+![Server Processing Indexed Search](/public/screenshots/image.png)
 
-### 5.3. Client Fetching from Local Storage (Offline Mode)
+### 5.3. Local Storage [DictionaryDatabase] (for Offline Mode)
 *(Imagine a screenshot indicating the connection state toggle to "Offline" and the browser successfully pulling the definition of 'Robust' from the Local Application Storage tab)*
+![Local Storage DictionaryDatabase](/public/screenshots/indexedDB.png)
 
 ### 5.4. Client Displaying Word Meaning
 *(Imagine a screenshot illustrating the application beautifully rendering the word, its pronunciation, its part of speech, and the returned definition onto the screen)*
+![Client Displaying Word Meaning](/public/screenshots/dictionary_result.png)
 
 ---
 
