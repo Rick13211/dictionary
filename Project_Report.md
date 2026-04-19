@@ -234,6 +234,12 @@ setup();
 ### 5.4. Client Displaying Word Meaning
 ![Client Displaying Word Meaning](/public/screenshots/dictionary_result.png)
 
+### 5.5. Schema structure
+![Schema Structure](/public/screenshots/Schema_Structure.png)
+
+### 5.6 DB contents
+![DB Contents](/public/screenshots/DB_Contents.png)
+
 ---
 
 ## 6. Observation
