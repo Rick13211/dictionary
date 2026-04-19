@@ -223,19 +223,15 @@ setup();
 ## 5. Output
 
 ### 5.1. User Submitting a Search Query
-*(Imagine a screenshot demonstrating the UI input field where a user types 'Robust' and hits Search)*
 ![UI input field where a user types 'Robust' and hits Search](/public/screenshots/user_input.png)
 
 ### 5.2. Server Processing Indexed Search (Online Mode)
-*(Imagine a screenshot of the terminal log showing exactly how many milliseconds the indexed query took compared to an un-indexed query)*
 ![Server Processing Indexed Search](/public/screenshots/image.png)
 
 ### 5.3. Local Storage [DictionaryDatabase] (for Offline Mode)
-*(Imagine a screenshot indicating the connection state toggle to "Offline" and the browser successfully pulling the definition of 'Robust' from the Local Application Storage tab)*
 ![Local Storage DictionaryDatabase](/public/screenshots/indexedDB.png)
 
 ### 5.4. Client Displaying Word Meaning
-*(Imagine a screenshot illustrating the application beautifully rendering the word, its pronunciation, its part of speech, and the returned definition onto the screen)*
 ![Client Displaying Word Meaning](/public/screenshots/dictionary_result.png)
 
 ---
